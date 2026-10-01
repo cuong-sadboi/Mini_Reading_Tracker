@@ -49,10 +49,6 @@
         <div class="cover-wrapper">
           <img v-if="book.cover_i" :src="`https://covers.openlibrary.org/b/id/${book.cover_i}-M.jpg`" class="book-cover" />
           <div v-else class="book-cover-placeholder"><span>No Cover</span></div>
-          
-          <div class="status-overlay" v-if="isInLibrary(book.key)">
-            <span class="badge badge-success">✓ In Library</span>
-          </div>
         </div>
         
         <div class="book-info">
@@ -72,20 +68,42 @@
               +
             </button>
           </div>
+          <div class="book-actions" v-else>
+            <span class="badge badge-success in-library-badge">✓ In Library</span>
+          </div>
         </div>
       </div>
     </div>
 
-    <div v-if="books.length > 0 && !loading" class="pagination glass-panel">
-      <button :disabled="page <= 1" @click="searchBooks(page - 1)" class="btn btn-outline">← Prev</button>
-      <span class="page-info">Page <strong>{{ page }}</strong> of <strong>{{ totalPages }}</strong></span>
-      <button :disabled="page >= totalPages" @click="searchBooks(page + 1)" class="btn btn-outline">Next →</button>
+    <div v-if="books.length > 0 && !loading" class="pagination-wrapper glass-panel">
+      <button :disabled="page <= 1" @click="searchBooks(page - 1)" class="pagination-btn nav-btn">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+      
+      <div class="page-numbers">
+        <button 
+          v-for="(p, index) in visiblePages" 
+          :key="index"
+          @click="p !== '...' ? searchBooks(p) : null"
+          :class="['pagination-btn', { active: p === page, dots: p === '...' }]"
+          :disabled="p === '...'"
+        >
+          {{ p }}
+        </button>
+      </div>
+
+      <button :disabled="page >= totalPages" @click="searchBooks(page + 1)" class="pagination-btn nav-btn">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
     </div>
 
     <BookDetailModal 
       v-if="selectedBookId" 
-      :work-id="selectedBookId" 
-      @close="selectedBookId = null" 
+      :work-id="selectedBookId"
+      :search-book="selectedBook"
+      :is-in-library="selectedBook && isInLibrary(selectedBook.key)"
+      @close="selectedBookId = null"
+      @add="handleAddToLibraryFromModal"
     />
   </div>
 </template>
@@ -105,14 +123,34 @@ const page = ref(1)
 const totalBooks = ref(0)
 const viewMode = ref('grid')
 const selectedBookId = ref(null)
+const selectedBook = ref(null)
 const addStatus = ref({})
 
 const limit = 20
 const totalPages = computed(() => Math.ceil(totalBooks.value / limit) || 1)
 
+const visiblePages = computed(() => {
+  const current = page.value
+  const total = totalPages.value
+  
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1)
+  }
+  
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, '...', total]
+  }
+  
+  if (current >= total - 3) {
+    return [1, '...', total - 4, total - 3, total - 2, total - 1, total]
+  }
+  
+  return [1, '...', current - 1, current, current + 1, '...', total]
+})
+
 const fetchLibrary = async () => {
   try {
-    const res = await axios.get('http://localhost:3000/api/library')
+    const res = await axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/api/library`)
     libraryBooks.value = res.data
   } catch (err) {
     console.error('Failed to fetch library', err)
@@ -145,7 +183,7 @@ const searchBooks = async (targetPage = 1) => {
   books.value = [] // clear previous for fresh animation
   
   try {
-    const res = await axios.get('http://localhost:3000/api/books/search', {
+    const res = await axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/api/books/search`, {
       params: { q: query.value, page: targetPage, limit }
     })
     books.value = res.data.docs
@@ -165,7 +203,14 @@ const searchBooks = async (targetPage = 1) => {
 }
 
 const openDetail = (book) => {
+  selectedBook.value = book
   selectedBookId.value = book.key.split('/').pop()
+}
+
+const handleAddToLibraryFromModal = async (status) => {
+  if (!selectedBook.value) return
+  addStatus.value[selectedBook.value.key] = status
+  await addToLibrary(selectedBook.value)
 }
 
 const addToLibrary = async (book) => {
@@ -180,7 +225,7 @@ const addToLibrary = async (book) => {
       status: addStatus.value[book.key]
     }
     
-    await axios.post('http://localhost:3000/api/library', payload)
+    await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/api/library`, payload)
     await fetchLibrary()
     
     // Add a tiny success notification if needed, but the badge handles visual feedback
@@ -432,9 +477,20 @@ const addToLibrary = async (book) => {
   line-height: 1;
 }
 
-.pagination {
+.in-library-badge {
+  width: 100%;
   justify-content: center;
-  padding: 1rem;
+  padding: 0.6rem;
+  font-size: 0.85rem;
+  border-radius: 0.5rem;
+}
+
+.pagination-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
   margin-top: 1rem;
   border-radius: 100px;
   width: fit-content;
@@ -442,11 +498,51 @@ const addToLibrary = async (book) => {
   margin-right: auto;
 }
 
-.page-info {
-  margin: 0 1rem;
-  font-size: 1.1rem;
+.page-numbers {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
 }
-.page-info strong {
+
+.pagination-btn {
+  min-width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 1rem;
+  font-weight: 500;
+  border-radius: 18px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0 0.5rem;
+}
+
+.pagination-btn:hover:not(:disabled):not(.dots) {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.pagination-btn.active {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.pagination-btn.dots {
+  cursor: default;
+  background: transparent !important;
+  color: #94a3b8;
+}
+
+.pagination-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.nav-btn {
   color: #fff;
 }
 

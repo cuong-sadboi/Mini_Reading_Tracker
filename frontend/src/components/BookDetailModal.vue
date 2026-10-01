@@ -24,6 +24,20 @@
             <h2 class="book-title">{{ book.title }}</h2>
             
             <div class="scroll-area">
+              <div class="add-section">
+                <div v-if="isInLibrary" class="badge badge-success in-library-badge">✓ In Library</div>
+                <div v-else class="book-actions">
+                  <select v-model="addStatus" class="select status-select">
+                    <option value="WANT_TO_READ">Want to read</option>
+                    <option value="READING">Reading</option>
+                    <option value="READ">Read</option>
+                  </select>
+                  <button @click="addToLibrary" class="btn btn-primary add-btn">
+                    + Add to library
+                  </button>
+                </div>
+              </div>
+
               <div class="description-box">
                 <h4 class="section-title">Synopsis</h4>
                 <p class="description" v-if="book.description">{{ book.description }}</p>
@@ -33,11 +47,8 @@
               <div class="meta" v-if="book.subjects && book.subjects.length > 0">
                 <h4 class="section-title">Subjects</h4>
                 <div class="subjects">
-                  <span v-for="(subject, idx) in book.subjects.slice(0, 15)" :key="idx" class="subject-tag">
+                  <span v-for="(subject, idx) in book.subjects" :key="idx" class="subject-tag">
                     {{ subject }}
-                  </span>
-                  <span v-if="book.subjects.length > 15" class="subject-tag more">
-                    +{{ book.subjects.length - 15 }} more
                   </span>
                 </div>
               </div>
@@ -57,19 +68,32 @@ const props = defineProps({
   workId: {
     type: String,
     required: true
+  },
+  searchBook: {
+    type: Object,
+    default: null
+  },
+  isInLibrary: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'add'])
 
 const book = ref(null)
 const loading = ref(false)
 const error = ref('')
+const addStatus = ref('WANT_TO_READ')
+
+const addToLibrary = () => {
+  emit('add', addStatus.value)
+}
 
 const fetchDetail = async () => {
   loading.value = true
   try {
-    const res = await axios.get(`http://localhost:3000/api/books/${props.workId}`)
+    const res = await axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/api/books/${props.workId}`)
     book.value = res.data
   } catch (err) {
     error.value = 'Failed to load book details.'
@@ -89,6 +113,9 @@ const close = () => {
 const coverUrl = computed(() => {
   if (book.value?.covers && book.value.covers.length > 0) {
     return `https://covers.openlibrary.org/b/id/${book.value.covers[0]}-L.jpg`
+  }
+  if (props.searchBook?.cover_i) {
+    return `https://covers.openlibrary.org/b/id/${props.searchBook.cover_i}-L.jpg`
   }
   return null
 })
@@ -286,7 +313,13 @@ const coverUrl = computed(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  max-height: 200px;
+  overflow-y: auto;
+  padding-right: 0.5rem;
 }
+.subjects::-webkit-scrollbar { width: 4px; }
+.subjects::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
+.subjects::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.5); border-radius: 2px; }
 
 .subject-tag {
   background: rgba(255, 255, 255, 0.05);
@@ -301,8 +334,35 @@ const coverUrl = computed(() => {
   background: rgba(99, 102, 241, 0.2);
   border-color: rgba(99, 102, 241, 0.4);
 }
-.subject-tag.more {
-  background: rgba(0,0,0,0.3);
-  color: #94a3b8;
+
+.add-section {
+  margin-bottom: 2rem;
+  padding: 1.25rem;
+  border-radius: 1rem;
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.in-library-badge {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 1rem;
+}
+.book-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+.status-select {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  font-size: 0.95rem;
+}
+.add-btn {
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.75rem;
+  font-size: 1rem;
+  font-weight: 600;
 }
 </style>

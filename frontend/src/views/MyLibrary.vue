@@ -92,15 +92,23 @@
               
               <div class="control-group">
                 <label>Rating</label>
-                <div class="rating-input">
-                  <select v-model.number="book.rating" @change="updateBook(book)" class="select">
-                    <option :value="null">Unrated</option>
-                    <option value="1">⭐ 1/5</option>
-                    <option value="2">⭐⭐ 2/5</option>
-                    <option value="3">⭐⭐⭐ 3/5</option>
-                    <option value="4">⭐⭐⭐⭐ 4/5</option>
-                    <option value="5">⭐⭐⭐⭐⭐ 5/5</option>
-                  </select>
+                <div class="star-rating-wrapper">
+                  <div class="star-rating">
+                    <span 
+                      v-for="star in 5" 
+                      :key="star"
+                      class="star"
+                      :class="{ filled: book.rating >= star }"
+                      @click="setRating(book, star)"
+                    >★</span>
+                  </div>
+                  <button 
+                    v-if="book.rating" 
+                    @click="setRating(book, null)" 
+                    class="clear-rating-btn" 
+                    title="Clear rating"
+                  >×</button>
+                  <span v-else class="unrated-text">Unrated</span>
                 </div>
               </div>
 
@@ -116,7 +124,17 @@
                       class="inline-input"
                       @change="updateBook(book)"
                     />
-                    <span class="total-pages">/ {{ book.total_pages || '?' }}</span>
+                    <span class="total-pages">
+                      /
+                      <input 
+                        type="number" 
+                        v-model.number="book.total_pages" 
+                        min="1"
+                        class="inline-input"
+                        placeholder="?"
+                        @change="updateBook(book)"
+                      />
+                    </span>
                   </span>
                 </div>
                 <div class="progress-bar-container" v-if="book.total_pages">
@@ -168,8 +186,8 @@ const fetchLibrary = async () => {
   loading.value = true
   try {
     const [booksRes, statsRes] = await Promise.all([
-      axios.get('http://localhost:3000/api/library'),
-      axios.get('http://localhost:3000/api/library/stats')
+      axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/api/library`),
+      axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/api/library/stats`)
     ])
     books.value = booksRes.data
     stats.value = statsRes.data
@@ -186,11 +204,12 @@ onMounted(() => {
 
 const updateBook = async (book) => {
   try {
-    await axios.patch(`http://localhost:3000/api/library/${book.id}`, {
+    await axios.patch(`${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/api/library/${book.id}`, {
       status: book.status,
       currentPage: book.current_page,
       rating: book.rating || null,
-      note: book.note
+      note: book.note,
+      totalPages: book.total_pages
     })
     await fetchLibrary()
   } catch (err) {
@@ -199,11 +218,16 @@ const updateBook = async (book) => {
   }
 }
 
+const setRating = (book, value) => {
+  book.rating = value
+  updateBook(book)
+}
+
 const deleteBook = async (id) => {
   if (!confirm('Are you sure you want to completely remove this book from your library?')) return
   
   try {
-    await axios.delete(`http://localhost:3000/api/library/${id}`)
+    await axios.delete(`${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/api/library/${id}`)
     await fetchLibrary()
   } catch (err) {
     alert('Failed to delete book')
@@ -459,6 +483,61 @@ const formatDate = (dateString) => {
   gap: 0.5rem;
 }
 .control-group.full-width { grid-column: 1 / -1; }
+
+.star-rating-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  height: 42px; /* match select height */
+}
+
+.star-rating {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.star {
+  font-size: 1.5rem;
+  color: #334155;
+  cursor: pointer;
+  transition: color 0.2s, transform 0.1s;
+  user-select: none;
+}
+
+.star:hover {
+  transform: scale(1.15);
+}
+
+.star.filled {
+  color: #fbbf24;
+}
+
+.clear-rating-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: none;
+  color: #94a3b8;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.clear-rating-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.unrated-text {
+  color: #64748b;
+  font-size: 0.9rem;
+  font-style: italic;
+}
 
 .control-group label {
   font-size: 0.85rem;

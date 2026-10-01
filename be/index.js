@@ -41,6 +41,12 @@ const sendJson = (res, statusCode, data) => {
     res.end(JSON.stringify(data));
 };
 
+const sendError = (res, statusCode, message) => {
+    return sendJson(res, statusCode, { error: message });
+};
+
+const VALID_STATUSES = ['WANT_TO_READ', 'READING', 'READ'];
+
 const server = http.createServer(async (req, res) => {
     // Handle Preflight OPTIONS
     if (req.method === 'OPTIONS') {
@@ -134,15 +140,26 @@ const server = http.createServer(async (req, res) => {
             const body = await parseBody(req);
             const { workId, title, author, coverUrl, description, totalPages, publishedYear, subjects, status } = body;
             
-            if (!workId || !title) {
-                return sendJson(res, 400, { error: 'workId and title are required' });
+            if (!workId || typeof workId !== 'string' || workId.trim() === '') {
+                return sendError(res, 400, 'Invalid or missing workId. It must be a non-empty string.');
+            }
+            if (!title || typeof title !== 'string' || title.trim() === '') {
+                return sendError(res, 400, 'Invalid or missing title. It must be a non-empty string.');
+            }
+            if (status && !VALID_STATUSES.includes(status)) {
+                return sendError(res, 400, `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`);
+            }
+            if (totalPages !== undefined && totalPages !== null) {
+                if (typeof totalPages !== 'number' || totalPages <= 0 || !Number.isInteger(totalPages)) {
+                    return sendError(res, 400, 'Invalid totalPages. It must be a positive integer.');
+                }
             }
             
             const finalStatus = status || 'WANT_TO_READ';
 
             const [existing] = await db.execute('SELECT id FROM books WHERE open_library_work_id = ?', [workId]);
             if (existing.length > 0) {
-                return sendJson(res, 409, { error: 'Book already exists in library' });
+                return sendError(res, 409, 'Book already exists in the library.');
             }
             
             let started_at = null;
@@ -175,11 +192,11 @@ const server = http.createServer(async (req, res) => {
         if (method === 'PATCH' && libraryIdMatch) {
             const id = libraryIdMatch[1];
             const body = await parseBody(req);
-            const { currentPage, status, rating, note } = body;
+            const { currentPage, status, rating, note, totalPages } = body;
             
             const [books] = await db.execute('SELECT * FROM books WHERE id = ?', [id]);
             if (books.length === 0) {
-                return sendJson(res, 404, { error: 'Book not found' });
+                return sendError(res, 404, 'Book not found.');
             }
             const book = books[0];
             
@@ -187,20 +204,44 @@ const server = http.createServer(async (req, res) => {
             let newCurrentPage = currentPage !== undefined ? currentPage : book.current_page;
             let newRating = rating !== undefined ? rating : book.rating;
             let newNote = note !== undefined ? note : book.note;
-            let newStartedAt = book.started_at;
-            let newFinishedAt = book.finished_at;
+            let newTotalPages = totalPages !== undefined ? totalPages : book.total_pages;
             
-            if (newRating !== null && (newRating < 1 || newRating > 5)) {
-                return sendJson(res, 400, { error: 'Rating must be between 1 and 5' });
+            // Validate rating
+            if (newRating !== null) {
+                if (typeof newRating !== 'number' || !Number.isInteger(newRating) || newRating < 1 || newRating > 5) {
+                    return sendError(res, 400, 'Invalid rating. It must be an integer between 1 and 5, or null.');
+                }
             }
             
-            if (newCurrentPage < 0 || (book.total_pages && newCurrentPage > book.total_pages)) {
-                return sendJson(res, 400, { error: 'Invalid current page' });
+            // Validate status
+            if (!VALID_STATUSES.includes(newStatus)) {
+                return sendError(res, 400, `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`);
             }
             
-            if (book.total_pages && newCurrentPage === book.total_pages) {
+            // Validate totalPages
+            if (newTotalPages !== null) {
+                if (typeof newTotalPages !== 'number' || !Number.isInteger(newTotalPages) || newTotalPages <= 0) {
+                    return sendError(res, 400, 'Invalid totalPages. It must be a positive integer.');
+                }
+            }
+            
+            // Validate currentPage
+            if (newCurrentPage !== null) {
+                if (typeof newCurrentPage !== 'number' || !Number.isInteger(newCurrentPage) || newCurrentPage < 0) {
+                    return sendError(res, 400, 'Invalid currentPage. It must be a non-negative integer.');
+                }
+                if (newTotalPages && newCurrentPage > newTotalPages) {
+                    return sendError(res, 400, `Invalid currentPage. It cannot exceed total pages (${newTotalPages}).`);
+                }
+            }
+            
+            // Auto-update status based on progress
+            if (newTotalPages && newCurrentPage === newTotalPages) {
                 newStatus = 'READ';
             }
+            
+            let newStartedAt = book.started_at;
+            let newFinishedAt = book.finished_at;
             
             if (book.status === 'WANT_TO_READ' && newStatus === 'READING') {
                 newStartedAt = new Date();
@@ -213,9 +254,9 @@ const server = http.createServer(async (req, res) => {
 
             await db.execute(
                 `UPDATE books SET 
-                    current_page = ?, status = ?, rating = ?, note = ?, started_at = ?, finished_at = ?
+                    current_page = ?, status = ?, rating = ?, note = ?, started_at = ?, finished_at = ?, total_pages = ?
                  WHERE id = ?`,
-                [newCurrentPage, newStatus, newRating, newNote, newStartedAt, newFinishedAt, id]
+                [newCurrentPage, newStatus, newRating, newNote, newStartedAt, newFinishedAt, newTotalPages, id]
             );
             
             return sendJson(res, 200, { message: 'Book updated successfully' });
@@ -227,21 +268,21 @@ const server = http.createServer(async (req, res) => {
             const [result] = await db.execute('DELETE FROM books WHERE id = ?', [id]);
             
             if (result.affectedRows === 0) {
-                return sendJson(res, 404, { error: 'Book not found' });
+                return sendError(res, 404, 'Book not found.');
             }
             
             return sendJson(res, 200, { message: 'Book deleted from library' });
         }
 
         // Route not found
-        return sendJson(res, 404, { error: 'Not Found' });
+        return sendError(res, 404, 'API Route Not Found.');
 
     } catch (error) {
         console.error(`Error on ${method} ${pathname}:`, error);
         
         // Return 500 but if axios returned 404 we could also forward it.
-        const errorMsg = error.response?.data?.error || 'Internal Server Error';
-        return sendJson(res, 500, { error: errorMsg });
+        const errorMsg = error.response?.data?.error || 'Internal Server Error. Please try again later.';
+        return sendError(res, 500, errorMsg);
     }
 });
 
